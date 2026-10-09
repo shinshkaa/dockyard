@@ -1,0 +1,11 @@
+#system files
+/.DS_Store
+
+#compiled binaries
+/dockyard
+
+#local application state
+/apps.json
+
+#IDE
+/.idea

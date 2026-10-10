@@ -1,56 +1,27 @@
 package main
 
 import (
-	"encoding/json"
+	"dockyard/internal/app"
+	"dockyard/internal/storage"
 	"errors"
 	"fmt"
 	"os"
 	"strconv"
 )
 
-type Application struct {
-	Name     string `json:"name"`
-	Image    string `json:"image"`
-	Port     int    `json:"port"`
-	Replicas int    `json:"replicas"`
-}
-
-func (app Application) validateReplicas() bool {
-	return app.Replicas > 0
-}
-
-func (app Application) printAppInfo() {
-	if !app.validateReplicas() {
-		fmt.Println("Invalid number of replicas")
-		return
-	}
-	fmt.Println("Name:", app.Name)
-	fmt.Println("Image:", app.Image)
-	fmt.Println("Port:", app.Port)
-	fmt.Println("Replicas:", app.Replicas)
-}
-
-func (app *Application) scale(replicas int) error {
-	if replicas < 1 {
-		return fmt.Errorf("invalid replicas count: %d", replicas)
-	}
-	app.Replicas = replicas
-	return nil
-}
-
-func printAllApps(apps map[string]Application) {
-	for _, app := range apps {
-		app.printAppInfo()
+func printAllApps(apps map[string]app.Application) {
+	for _, localApp := range apps {
+		localApp.PrintAppInfo()
 		fmt.Println()
 	}
 }
 
-func findApp(apps map[string]Application, key string) (Application, bool) {
-	app, exists := apps[key]
-	return app, exists
+func findApp(apps map[string]app.Application, key string) (app.Application, bool) {
+	localApp, exists := apps[key]
+	return localApp, exists
 }
 
-func removeApp(apps map[string]Application, name string) error {
+func removeApp(apps map[string]app.Application, name string) error {
 	if _, exists := findApp(apps, name); exists {
 		delete(apps, name)
 		return nil
@@ -58,12 +29,12 @@ func removeApp(apps map[string]Application, name string) error {
 	return errors.New("app doesn't exist")
 }
 
-func scaleApp(apps map[string]Application, name string, replicas int) error {
-	if app, exists := apps[name]; exists {
-		if err := app.scale(replicas); err != nil {
+func scaleApp(apps map[string]app.Application, name string, replicas int) error {
+	if localApp, exists := apps[name]; exists {
+		if err := localApp.Scale(replicas); err != nil {
 			return fmt.Errorf("scale error: %w", err)
 		}
-		apps[name] = app
+		apps[name] = localApp
 		return nil
 	}
 	return errors.New("app doesn't exist")
@@ -76,39 +47,8 @@ func checkLength(command []string, length int) error {
 	return nil
 }
 
-func saveApps(apps map[string]Application) error {
-	appsJson, err := json.MarshalIndent(apps, "", " ")
-	if err != nil {
-		return err
-	}
-	err = os.WriteFile("apps.json", appsJson, 0644)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func loadApps() (map[string]Application, error) {
-	appsJson, err := os.ReadFile("apps.json")
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return make(map[string]Application), nil
-		}
-		return nil, err
-	}
-	apps := map[string]Application{}
-	err = json.Unmarshal(appsJson, &apps)
-	if err != nil {
-		return nil, err
-	}
-	if apps == nil {
-		return nil, errors.New("apps.json contains null instead of an application registry")
-	}
-	return apps, nil
-}
-
 func main() {
-	apps, err := loadApps()
+	apps, err := storage.LoadApps()
 	if err != nil {
 		fmt.Println("Loading error:", err)
 		return
@@ -136,7 +76,7 @@ func main() {
 			fmt.Println("Scaling error:", err)
 			return
 		}
-		if err = saveApps(apps); err != nil {
+		if err = storage.SaveApps(apps); err != nil {
 			fmt.Println(err)
 			return
 		}
@@ -150,7 +90,7 @@ func main() {
 			fmt.Println(err)
 			return
 		}
-		if err = saveApps(apps); err != nil {
+		if err = storage.SaveApps(apps); err != nil {
 			fmt.Println(err)
 			return
 		}

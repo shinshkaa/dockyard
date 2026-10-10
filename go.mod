@@ -1,3 +1,3 @@
-module awesomeProject1
+module dockyard
 
 go 1.27

@@ -2,6 +2,7 @@ package main
 
 import (
 	"dockyard/internal/app"
+	"dockyard/internal/docker"
 	"dockyard/internal/storage"
 	"errors"
 	"fmt"
@@ -91,6 +92,12 @@ func main() {
 			return
 		}
 		if err = storage.SaveApps(apps); err != nil {
+			fmt.Println(err)
+			return
+		}
+	case "containers":
+		err := docker.ListContainers()
+		if err != nil {
 			fmt.Println(err)
 			return
 		}

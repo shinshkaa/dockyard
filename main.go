@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -8,10 +9,10 @@ import (
 )
 
 type Application struct {
-	Name     string
-	Image    string
-	Port     int
-	Replicas int
+	Name     string `json:"name"`
+	Image    string `json:"image"`
+	Port     int    `json:"port"`
+	Replicas int    `json:"replicas"`
 }
 
 func (app Application) validateReplicas() bool {
@@ -49,8 +50,12 @@ func findApp(apps map[string]Application, key string) (Application, bool) {
 	return app, exists
 }
 
-func removeApp(apps map[string]Application, name string) {
-	delete(apps, name)
+func removeApp(apps map[string]Application, name string) error {
+	if _, exists := findApp(apps, name); exists {
+		delete(apps, name)
+		return nil
+	}
+	return errors.New("app doesn't exist")
 }
 
 func scaleApp(apps map[string]Application, name string, replicas int) error {
@@ -71,27 +76,44 @@ func checkLength(command []string, length int) error {
 	return nil
 }
 
+func saveApps(apps map[string]Application) error {
+	appsJson, err := json.MarshalIndent(apps, "", " ")
+	if err != nil {
+		return err
+	}
+	err = os.WriteFile("apps.json", appsJson, 0644)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func loadApps() (map[string]Application, error) {
+	appsJson, err := os.ReadFile("apps.json")
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return make(map[string]Application), nil
+		}
+		return nil, err
+	}
+	apps := map[string]Application{}
+	err = json.Unmarshal(appsJson, &apps)
+	if err != nil {
+		return nil, err
+	}
+	if apps == nil {
+		return nil, errors.New("apps.json contains null instead of an application registry")
+	}
+	return apps, nil
+}
+
 func main() {
-	apps := map[string]Application{
-		"prometheus": {
-			Name:     "Prometheus",
-			Image:    "prom/prometheus",
-			Port:     9090,
-			Replicas: 3,
-		},
-		"grafana": {
-			Name:     "Grafana",
-			Image:    "grafana/grafana",
-			Port:     3000,
-			Replicas: 1,
-		},
+	apps, err := loadApps()
+	if err != nil {
+		fmt.Println("Loading error:", err)
+		return
 	}
-	apps["nginx"] = Application{
-		Name:     "Nginx",
-		Image:    "nginx:alpine",
-		Port:     8080,
-		Replicas: 3,
-	}
+
 	if len(os.Args) < 2 {
 		fmt.Println("Usage: dockyard <list|scale|remove>")
 		return
@@ -114,46 +136,25 @@ func main() {
 			fmt.Println("Scaling error:", err)
 			return
 		}
+		if err = saveApps(apps); err != nil {
+			fmt.Println(err)
+			return
+		}
 		fmt.Printf("Application %s scaled to %d replicas\n\n", os.Args[2], replicas)
 	case "remove":
 		if err := checkLength(os.Args, 2); err != nil {
 			fmt.Printf("%v: remove <name>\n", err)
 			return
 		}
-		removeApp(apps, os.Args[2])
+		if err = removeApp(apps, os.Args[2]); err != nil {
+			fmt.Println(err)
+			return
+		}
+		if err = saveApps(apps); err != nil {
+			fmt.Println(err)
+			return
+		}
 	default:
 		fmt.Println("Unknown command")
 	}
-
-	//app := apps["prometheus"]
-	//
-	//err := app.scale(0)
-	//if err != nil {
-	//	err = fmt.Errorf("cannot scale %s: %w", app.Name, err)
-	//	fmt.Println("Error:", err)
-	//	return
-	//}
-	//removeApp(apps, "nginx")
-	//if app, isFound := findApp(apps, "nginx"); isFound {
-	//	app.printAppInfo()
-	//} else {
-	//	fmt.Println("The app wasn't found")
-	//}
-
-	//err := scaleApp(apps, "grafana", 1)
-	//if err != nil {
-	//	fmt.Println(err)
-	//	return
-	//}
-	//err = scaleApp(apps, "promtail", 3)
-	//if err != nil {
-	//	fmt.Println(err)
-	//	return
-	//}
-	//
-	//err = scaleApp(apps, "grafana", -2)
-	//if err != nil {
-	//	fmt.Println(err)
-	//	return
-	//}
 }

@@ -102,11 +102,11 @@ func main() {
 			return
 		}
 	case "deploy":
-		if err := checkLength(os.Args, 3); err != nil {
-			fmt.Printf("%v: deploy <image> <name>\n", err)
+		if err := checkLength(os.Args, 4); err != nil {
+			fmt.Printf("%v: deploy <image> <name> <port>\n", err)
 			return
 		}
-		err = docker.DeployContainer(os.Args[2], os.Args[3])
+		err = docker.DeployContainer(os.Args[2], os.Args[3], os.Args[4])
 		if err != nil {
 			fmt.Println(err)
 			return
@@ -130,7 +130,7 @@ func main() {
 		}
 		err = docker.DeleteContainer(os.Args[2])
 		if err != nil {
-			fmt.Println()
+			fmt.Println(err)
 			return
 		}
 		fmt.Printf("Container %s deleted successfully\n", os.Args[2])

@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
@@ -58,6 +59,22 @@ func imagePull(cli *client.Client, ctx context.Context, imageName string) error 
 		return fmt.Errorf("pull image: %w", err)
 	}
 	return nil
+}
+
+func ensureImage(cli *client.Client, ctx context.Context, imageName string) error {
+	_, err := cli.ImageInspect(
+		ctx,
+		imageName,
+	)
+	if err == nil {
+		fmt.Println("Image already exists locally")
+		return nil
+	}
+	if !errdefs.IsNotFound(err) {
+		return fmt.Errorf("inspect image: %w", err)
+	}
+	fmt.Println("Image not found, pulling...")
+	return imagePull(cli, ctx, imageName)
 }
 
 func containerCreate(cli *client.Client, ctx context.Context, image, name string, hostPort int) (string, error) {
@@ -118,9 +135,7 @@ func DeployContainer(imageName, containerName string, hostPort int) error {
 	)
 	defer cancel()
 
-	fmt.Printf("Pulling image %s...\n", imageName)
-	err = imagePull(cli, ctx, imageName)
-	if err != nil {
+	if err := ensureImage(cli, ctx, imageName); err != nil {
 		return err
 	}
 

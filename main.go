@@ -56,7 +56,7 @@ func main() {
 	}
 
 	if len(os.Args) < 2 {
-		fmt.Println("Usage: dockyard <list|scale|remove>")
+		fmt.Println("Usage: dockyard <list|scale|remove|containers|deploy|stop|delete>")
 		return
 	}
 	switch os.Args[1] {
@@ -106,7 +106,16 @@ func main() {
 			fmt.Printf("%v: deploy <image> <name> <port>\n", err)
 			return
 		}
-		err = docker.DeployContainer(os.Args[2], os.Args[3], os.Args[4])
+		port, err := strconv.Atoi(os.Args[4])
+		if err != nil {
+			fmt.Printf("Port is incorrect: %v\n", err)
+			return
+		}
+		if port < 1 || port > 65535 {
+			fmt.Println("Port must be between 1 and 65535")
+			return
+		}
+		err = docker.DeployContainer(os.Args[2], os.Args[3], port)
 		if err != nil {
 			fmt.Println(err)
 			return

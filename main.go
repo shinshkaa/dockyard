@@ -101,6 +101,39 @@ func main() {
 			fmt.Println(err)
 			return
 		}
+	case "deploy":
+		if err := checkLength(os.Args, 3); err != nil {
+			fmt.Printf("%v: deploy <image> <name>\n", err)
+			return
+		}
+		err = docker.DeployContainer(os.Args[2], os.Args[3])
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		fmt.Printf("Container %s deployed successfully\n", os.Args[3])
+	case "stop":
+		if err := checkLength(os.Args, 2); err != nil {
+			fmt.Printf("%v: stop <name, id>\n", err)
+			return
+		}
+		err = docker.StopContainer(os.Args[2])
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		fmt.Printf("Container %s stopped successfully\n", os.Args[2])
+	case "delete":
+		if err := checkLength(os.Args, 2); err != nil {
+			fmt.Printf("%v: delete <name, id>\n", err)
+			return
+		}
+		err = docker.DeleteContainer(os.Args[2])
+		if err != nil {
+			fmt.Println()
+			return
+		}
+		fmt.Printf("Container %s deleted successfully\n", os.Args[2])
 	default:
 		fmt.Println("Unknown command")
 	}

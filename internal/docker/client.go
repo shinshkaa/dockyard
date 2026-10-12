@@ -3,10 +3,12 @@ package docker
 import (
 	"context"
 	"fmt"
+	"os"
 	"strconv"
 	"time"
 
 	"github.com/containerd/errdefs"
+	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
@@ -77,7 +79,7 @@ func ensureImage(cli *client.Client, ctx context.Context, imageName string) erro
 	return imagePull(cli, ctx, imageName)
 }
 
-func containerCreate(cli *client.Client, ctx context.Context, image, name string, hostPort int) (string, error) {
+func containerCreate(cli *client.Client, ctx context.Context, image, name, networkName string, hostPort int) (string, error) {
 	port, err := network.ParsePort("80/tcp")
 	if err != nil {
 		return "", fmt.Errorf("invalid container port: %w", err)
@@ -101,6 +103,11 @@ func containerCreate(cli *client.Client, ctx context.Context, image, name string
 					},
 				},
 			},
+			NetworkingConfig: &network.NetworkingConfig{
+				EndpointsConfig: map[string]*network.EndpointSettings{
+					networkName: {},
+				},
+			},
 		},
 	)
 	if err != nil {
@@ -122,7 +129,7 @@ func containerStart(cli *client.Client, ctx context.Context, ID string) error {
 
 }
 
-func DeployContainer(imageName, containerName string, hostPort int) error {
+func DeployContainer(imageName, containerName, networkName string, hostPort int) error {
 	cli, err := client.New(client.FromEnv)
 	if err != nil {
 		return fmt.Errorf("create docker client: %w", err)
@@ -139,7 +146,7 @@ func DeployContainer(imageName, containerName string, hostPort int) error {
 		return err
 	}
 
-	containerID, err := containerCreate(cli, ctx, imageName, containerName, hostPort)
+	containerID, err := containerCreate(cli, ctx, imageName, containerName, networkName, hostPort)
 	if err != nil {
 		return err
 	}
@@ -194,6 +201,94 @@ func DeleteContainer(containerName string) error {
 	)
 	if err != nil {
 		return fmt.Errorf("remove container: %w", err)
+	}
+	return nil
+}
+
+func ShowLogs(containerName string) error {
+	cli, err := client.New(client.FromEnv)
+	if err != nil {
+		return fmt.Errorf("create docker client: %w", err)
+	}
+	defer cli.Close()
+
+	ctx, close := context.WithTimeout(
+		context.Background(),
+		5*time.Second,
+	)
+	defer close()
+
+	logs, err := cli.ContainerLogs(
+		ctx,
+		containerName,
+		client.ContainerLogsOptions{
+			ShowStderr: true,
+			ShowStdout: true,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("container logs: %w", err)
+	}
+	defer logs.Close()
+
+	_, err = stdcopy.StdCopy(
+		os.Stdout,
+		os.Stderr,
+		logs,
+	)
+	if err != nil {
+		return fmt.Errorf("stdcopy: %w", err)
+	}
+	return nil
+}
+
+func CreateNetwork(networkName string) error {
+	cli, err := client.New(client.FromEnv)
+	if err != nil {
+		return fmt.Errorf("create docker client: %w", err)
+	}
+	defer cli.Close()
+
+	ctx, close := context.WithTimeout(
+		context.Background(),
+		5*time.Second,
+	)
+	defer close()
+
+	_, err = cli.NetworkCreate(
+		ctx,
+		networkName,
+		client.NetworkCreateOptions{
+			Driver: "bridge",
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("network creation: %w", err)
+	}
+	return nil
+}
+
+func ConnectNetwork(networkName, containerName string) error {
+	cli, err := client.New(client.FromEnv)
+	if err != nil {
+		return fmt.Errorf("create docker client: %w", err)
+	}
+	defer cli.Close()
+
+	ctx, close := context.WithTimeout(
+		context.Background(),
+		5*time.Second,
+		)
+	defer close()
+
+	if _, err := cli.NetworkConnect(
+		ctx,
+		networkName,
+		client.NetworkConnectOptions{
+			Container: containerName,
+		},
+		); err != nil {
+		return fmt.Errorf("network connection: %w", err)
 	}
 	return nil
 }

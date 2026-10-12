@@ -102,8 +102,8 @@ func main() {
 			return
 		}
 	case "deploy":
-		if err := checkLength(os.Args, 4); err != nil {
-			fmt.Printf("%v: deploy <image> <name> <port>\n", err)
+		if err := checkLength(os.Args, 5); err != nil {
+			fmt.Printf("%v: deploy <image> <name> <port> <network_name>\n", err)
 			return
 		}
 		port, err := strconv.Atoi(os.Args[4])
@@ -115,7 +115,7 @@ func main() {
 			fmt.Println("Port must be between 1 and 65535")
 			return
 		}
-		err = docker.DeployContainer(os.Args[2], os.Args[3], port)
+		err = docker.DeployContainer(os.Args[2], os.Args[3], os.Args[5], port)
 		if err != nil {
 			fmt.Println(err)
 			return
@@ -143,6 +143,42 @@ func main() {
 			return
 		}
 		fmt.Printf("Container %s deleted successfully\n", os.Args[2])
+	case "logs":
+		if err := checkLength(os.Args, 2); err != nil {
+			fmt.Printf("%v: logs <name, id>\n", err)
+			return
+		}
+		if err = docker.ShowLogs(os.Args[2]); err != nil {
+			fmt.Printf("Logs reading error: %v\n", err)
+			return
+		}
+	case "network":
+		if err := checkLength(os.Args, 2); err != nil {
+			fmt.Printf("%v: network <create>\n", err)
+			return
+		}
+		switch os.Args[2] {
+		case "create":
+			if err := checkLength(os.Args, 3); err != nil {
+				fmt.Printf("%v: network create <name>\n", err)
+				return
+			}
+			if err = docker.CreateNetwork(os.Args[3]); err != nil {
+				fmt.Println(err)
+				return
+			}
+			fmt.Printf("Network %s successfully created\n", os.Args[3])
+		case "connect":
+			if err := checkLength(os.Args, 4); err != nil {
+				fmt.Printf("%v: network connect <network_name> <container_name>\n", err)
+				return
+			}
+			if err = docker.ConnectNetwork(os.Args[3], os.Args[4]); err != nil {
+				fmt.Println(err)
+				return
+			}
+			fmt.Printf("Container %s successfully connected to %s network\n", os.Args[4], os.Args[3])
+		}
 	default:
 		fmt.Println("Unknown command")
 	}

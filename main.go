@@ -115,12 +115,30 @@ func main() {
 			fmt.Println("Port must be between 1 and 65535")
 			return
 		}
+		newApp := app.Application{
+			Name:     os.Args[3],
+			Image:    os.Args[2],
+			Port:     port,
+			Replicas: 1,
+			Network:  os.Args[5],
+		}
+		if _, exists := apps[os.Args[3]]; exists {
+			fmt.Println("Application already exists")
+			return
+		}
+
 		err = docker.DeployContainer(os.Args[2], os.Args[3], os.Args[5], port)
 		if err != nil {
 			fmt.Println(err)
 			return
 		}
+		apps[newApp.Name] = newApp
+		if err := storage.SaveApps(apps); err != nil {
+			fmt.Println("Saving error:", err)
+			return
+		}
 		fmt.Printf("Container %s deployed successfully\n", os.Args[3])
+
 	case "stop":
 		if err := checkLength(os.Args, 2); err != nil {
 			fmt.Printf("%v: stop <name, id>\n", err)
@@ -137,9 +155,25 @@ func main() {
 			fmt.Printf("%v: delete <name, id>\n", err)
 			return
 		}
+
+		if _, exists := apps[os.Args[2]]; !exists {
+			fmt.Println("Application doesn't exist")
+			return
+		}
+
 		err = docker.DeleteContainer(os.Args[2])
 		if err != nil {
 			fmt.Println(err)
+			return
+		}
+
+		err := removeApp(apps, os.Args[2])
+		if err != nil {
+			fmt.Println("Deleting error:", err)
+			return
+		}
+		if err := storage.SaveApps(apps); err != nil {
+			fmt.Println("Saving error:", err)
 			return
 		}
 		fmt.Printf("Container %s deleted successfully\n", os.Args[2])

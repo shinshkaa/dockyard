@@ -7,6 +7,7 @@ type Application struct {
 	Image    string `json:"image"`
 	Port     int    `json:"port"`
 	Replicas int    `json:"replicas"`
+	Network  string `json:"network"`
 }
 
 func (app *Application) Scale(replicas int) error {

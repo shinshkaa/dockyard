@@ -72,6 +72,34 @@ func main() {
 			fmt.Println("Invalid replicas count:", err)
 			return
 		}
+		currentApp, exists := apps[os.Args[2]]
+		if !exists {
+			fmt.Println("Application doesn't exist")
+			return
+		}
+
+		if replicas < 1 {
+			fmt.Println("Replicas must be greater than zero")
+			return
+		} else if replicas < currentApp.Replicas {
+			if err = docker.ScaleDown(
+				currentApp.Name, currentApp.Replicas, replicas,
+			); err != nil {
+				fmt.Println(err)
+				return
+			}
+		} else if replicas == currentApp.Replicas {
+			fmt.Println("Already at desired replica count")
+			return
+		} else {
+			if err = docker.ScaleUp(
+				currentApp.Image, currentApp.Name, currentApp.Network, currentApp.Replicas, replicas,
+			); err != nil {
+				fmt.Println(err)
+				return
+			}
+		}
+
 		err = scaleApp(apps, os.Args[2], replicas)
 		if err != nil {
 			fmt.Println("Scaling error:", err)
@@ -81,20 +109,7 @@ func main() {
 			fmt.Println(err)
 			return
 		}
-		fmt.Printf("Application %s scaled to %d replicas\n\n", os.Args[2], replicas)
-	case "remove":
-		if err := checkLength(os.Args, 2); err != nil {
-			fmt.Printf("%v: remove <name>\n", err)
-			return
-		}
-		if err = removeApp(apps, os.Args[2]); err != nil {
-			fmt.Println(err)
-			return
-		}
-		if err = storage.SaveApps(apps); err != nil {
-			fmt.Println(err)
-			return
-		}
+		fmt.Printf("Application %s scaled to %d replicas\n", os.Args[2], replicas)
 	case "containers":
 		err := docker.ListContainers()
 		if err != nil {
@@ -127,7 +142,9 @@ func main() {
 			return
 		}
 
-		err = docker.DeployContainer(os.Args[2], os.Args[3], os.Args[5], port)
+		containerName := fmt.Sprintf("%s-1", newApp.Name)
+
+		err = docker.DeployContainer(newApp.Image, containerName, newApp.Network, newApp.Port)
 		if err != nil {
 			fmt.Println(err)
 			return
@@ -152,31 +169,30 @@ func main() {
 		fmt.Printf("Container %s stopped successfully\n", os.Args[2])
 	case "delete":
 		if err := checkLength(os.Args, 2); err != nil {
-			fmt.Printf("%v: delete <name, id>\n", err)
+			fmt.Printf("%v: delete <name>\n", err)
 			return
 		}
 
-		if _, exists := apps[os.Args[2]]; !exists {
-			fmt.Println("Application doesn't exist")
+		currentApp, exists := findApp(apps, os.Args[2])
+		if !exists {
+			fmt.Println("App doesn't exist")
 			return
 		}
 
-		err = docker.DeleteContainer(os.Args[2])
+		err := docker.DeleteApplication(currentApp.Name, currentApp.Replicas)
 		if err != nil {
 			fmt.Println(err)
 			return
 		}
-
-		err := removeApp(apps, os.Args[2])
-		if err != nil {
-			fmt.Println("Deleting error:", err)
+		if err = removeApp(apps, os.Args[2]); err != nil {
+			fmt.Println(err)
 			return
 		}
-		if err := storage.SaveApps(apps); err != nil {
-			fmt.Println("Saving error:", err)
+		if err = storage.SaveApps(apps); err != nil {
+			fmt.Println(err)
 			return
 		}
-		fmt.Printf("Container %s deleted successfully\n", os.Args[2])
+		fmt.Println("App deleted successfully")
 	case "logs":
 		if err := checkLength(os.Args, 2); err != nil {
 			fmt.Printf("%v: logs <name, id>\n", err)
@@ -213,6 +229,46 @@ func main() {
 			}
 			fmt.Printf("Container %s successfully connected to %s network\n", os.Args[4], os.Args[3])
 		}
+	case "replicas":
+		if err := checkLength(os.Args, 5); err != nil {
+			fmt.Printf("%v: replicas <image> <name> <count> <network>\n", err)
+			return
+		}
+
+		if _, exists := findApp(apps, os.Args[3]); exists {
+			fmt.Println("Application already exists")
+			return
+		}
+
+		replicasCount, err := strconv.Atoi(os.Args[4])
+		if err != nil {
+			fmt.Printf("Wrong replicas count %s: %v\n", os.Args[4], err)
+			return
+		}
+		if replicasCount < 1 {
+			fmt.Println("Replicas count must be greater than zero")
+			return
+		}
+		if err = docker.DeployReplicas(os.Args[2], os.Args[3], os.Args[5], replicasCount); err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		newApp := app.Application{
+			Name:     os.Args[3],
+			Image:    os.Args[2],
+			Port:     0,
+			Replicas: replicasCount,
+			Network:  os.Args[5],
+		}
+		apps[newApp.Name] = newApp
+		if err := storage.SaveApps(apps); err != nil {
+			fmt.Println("Saving error:", err)
+			return
+		}
+		fmt.Printf("Container %s deployed successfully\n", os.Args[3])
+
+		fmt.Printf("%d replicas created\n", replicasCount)
 	default:
 		fmt.Println("Unknown command")
 	}

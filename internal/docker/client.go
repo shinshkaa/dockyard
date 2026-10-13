@@ -79,11 +79,47 @@ func ensureImage(cli *client.Client, ctx context.Context, imageName string) erro
 	return imagePull(cli, ctx, imageName)
 }
 
-func containerCreate(cli *client.Client, ctx context.Context, image, name, networkName string, hostPort int) (string, error) {
+func deploySingle(
+	cli *client.Client,
+	ctx context.Context,
+	imageName, containerName, networkName string,
+	hostPort int,
+) error {
+	containerID, err := containerCreate(
+		cli, ctx, imageName, containerName, networkName, hostPort,
+	)
+	if err != nil {
+		return err
+	}
+	if err := containerStart(cli, ctx, containerID); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func containerCreate(
+	cli *client.Client,
+	ctx context.Context,
+	image, name, networkName string,
+	hostPort int,
+) (string, error) {
 	port, err := network.ParsePort("80/tcp")
 	if err != nil {
 		return "", fmt.Errorf("invalid container port: %w", err)
 	}
+
+	hostConfig := &container.HostConfig{}
+	if hostPort > 0 {
+		hostConfig.PortBindings = network.PortMap{
+			port: []network.PortBinding{
+				{
+					HostPort: strconv.Itoa(hostPort),
+				},
+			},
+		}
+	}
+
 	result, err := cli.ContainerCreate(
 		ctx,
 		client.ContainerCreateOptions{
@@ -94,15 +130,7 @@ func containerCreate(cli *client.Client, ctx context.Context, image, name, netwo
 					port: {},
 				},
 			},
-			HostConfig: &container.HostConfig{
-				PortBindings: network.PortMap{
-					port: []network.PortBinding{
-						{
-							HostPort: strconv.Itoa(hostPort),
-						},
-					},
-				},
-			},
+			HostConfig: hostConfig,
 			NetworkingConfig: &network.NetworkingConfig{
 				EndpointsConfig: map[string]*network.EndpointSettings{
 					networkName: {},
@@ -146,12 +174,7 @@ func DeployContainer(imageName, containerName, networkName string, hostPort int)
 		return err
 	}
 
-	containerID, err := containerCreate(cli, ctx, imageName, containerName, networkName, hostPort)
-	if err != nil {
-		return err
-	}
-	err = containerStart(cli, ctx, containerID)
-	if err != nil {
+	if err := deploySingle(cli, ctx, imageName, containerName, networkName, hostPort); err != nil {
 		return err
 	}
 	return nil
@@ -201,6 +224,13 @@ func DeleteContainer(containerName string) error {
 	)
 	if err != nil {
 		return fmt.Errorf("remove container: %w", err)
+	}
+	return nil
+}
+
+func DeleteApplication(appName string, replicas int) error {
+	if err := ScaleDown(appName, replicas, 0); err != nil {
+		return err
 	}
 	return nil
 }
@@ -278,7 +308,7 @@ func ConnectNetwork(networkName, containerName string) error {
 	ctx, close := context.WithTimeout(
 		context.Background(),
 		5*time.Second,
-		)
+	)
 	defer close()
 
 	if _, err := cli.NetworkConnect(
@@ -287,8 +317,114 @@ func ConnectNetwork(networkName, containerName string) error {
 		client.NetworkConnectOptions{
 			Container: containerName,
 		},
-		); err != nil {
+	); err != nil {
 		return fmt.Errorf("network connection: %w", err)
+	}
+	return nil
+}
+
+func DeployReplicas(
+	imageName, appName, networkName string,
+	replicas int,
+) error {
+	cli, err := client.New(client.FromEnv)
+	if err != nil {
+		return fmt.Errorf("create docker client: %w", err)
+	}
+	defer cli.Close()
+
+	ctx, close := context.WithTimeout(
+		context.Background(),
+		2*time.Minute,
+	)
+	defer close()
+
+	if err = ensureImage(cli, ctx, imageName); err != nil {
+		return err
+	}
+
+	for i := 1; i <= replicas; i++ {
+		containerName := fmt.Sprintf("%s-%d", appName, i)
+		if err := deploySingle(
+			cli,
+			ctx,
+			imageName,
+			containerName,
+			networkName,
+			0,
+		); err != nil {
+			return fmt.Errorf("create replica %d: %w", i, err)
+		}
+	}
+	return nil
+}
+
+func ScaleUp(
+	imageName, appName, networkName string,
+	currentReplicas, desiredReplicas int,
+) error {
+	cli, err := client.New(client.FromEnv)
+	if err != nil {
+		return fmt.Errorf("create docker client: %w", err)
+	}
+	defer cli.Close()
+
+	ctx, close := context.WithTimeout(
+		context.Background(),
+		1*time.Minute,
+	)
+	defer close()
+
+	if err := ensureImage(cli, ctx, imageName); err != nil {
+		return err
+	}
+
+	for i := currentReplicas + 1; i <= desiredReplicas; i++ {
+		containerName := fmt.Sprintf("%s-%d", appName, i)
+
+		if err := deploySingle(
+			cli, ctx, imageName, containerName, networkName, 0,
+		); err != nil {
+			return fmt.Errorf("create replica %d: %w", i, err)
+		}
+	}
+	return nil
+}
+
+func ScaleDown(
+	appName string,
+	currentReplicas, desiredReplicas int,
+) error {
+	cli, err := client.New(client.FromEnv)
+	if err != nil {
+		return fmt.Errorf("create docker client: %w", err)
+	}
+	defer cli.Close()
+
+	ctx, close := context.WithTimeout(
+		context.Background(),
+		1*time.Minute,
+	)
+	defer close()
+
+	for i := currentReplicas; i >= desiredReplicas+1; i-- {
+		containerName := fmt.Sprintf("%s-%d", appName, i)
+
+		if _, err = cli.ContainerStop(
+			ctx,
+			containerName,
+			client.ContainerStopOptions{},
+		); err != nil {
+			return fmt.Errorf("stop replica %d: %w", i, err)
+		}
+
+		if _, err = cli.ContainerRemove(
+			ctx,
+			containerName,
+			client.ContainerRemoveOptions{},
+		); err != nil {
+			return fmt.Errorf("delete replica %d: %w", i, err)
+		}
 	}
 	return nil
 }

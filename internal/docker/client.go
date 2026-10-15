@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/containerd/errdefs"
@@ -272,6 +274,49 @@ func ShowLogs(containerName string) error {
 	return nil
 }
 
+func ListAppReplicas(appName string) ([]int, error) {
+	cli, err := client.New(client.FromEnv)
+	if err != nil {
+		return []int{}, fmt.Errorf("create docker client: %w", err)
+	}
+	defer cli.Close()
+
+	ctx, close := context.WithTimeout(
+		context.Background(),
+		5*time.Second,
+	)
+	defer close()
+
+	result, err := cli.ContainerList(
+		ctx,
+		client.ContainerListOptions{
+			All: true,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list containers: %w", err)
+	}
+
+	activeContainersList := []int{}
+	for _, c := range result.Items {
+		for _, name := range c.Names {
+			prefix := appName + "-"
+			name = strings.TrimPrefix(name, "/")
+			if !strings.HasPrefix(name, prefix) {
+				continue
+			}
+			replicaStr := strings.TrimPrefix(name, prefix)
+			replicaID, err := strconv.Atoi(replicaStr)
+			if err != nil || replicaID < 1 {
+				continue
+			}
+			activeContainersList = append(activeContainersList, replicaID)
+		}
+	}
+	slices.Sort(activeContainersList)
+	return activeContainersList, nil
+}
+
 func CreateNetwork(networkName string) error {
 	cli, err := client.New(client.FromEnv)
 	if err != nil {
@@ -378,14 +423,19 @@ func ScaleUp(
 	if err := ensureImage(cli, ctx, imageName); err != nil {
 		return err
 	}
+	replicasList, err := ListAppReplicas(appName)
+	if err != nil {
+		return err
+	}
+	missingReplicasList := MissingReplicas(replicasList, desiredReplicas)
 
-	for i := currentReplicas + 1; i <= desiredReplicas; i++ {
-		containerName := fmt.Sprintf("%s-%d", appName, i)
+	for _, missingReplicaID := range missingReplicasList {
+		containerName := fmt.Sprintf("%s-%d", appName, missingReplicaID)
 
 		if err := deploySingle(
 			cli, ctx, imageName, containerName, networkName, 0,
 		); err != nil {
-			return fmt.Errorf("create replica %d: %w", i, err)
+			return fmt.Errorf("create replica %d: %w", missingReplicaID, err)
 		}
 	}
 	return nil
@@ -427,4 +477,24 @@ func ScaleDown(
 		}
 	}
 	return nil
+}
+
+func MissingReplicas(existing []int, desired int) []int {
+	missingList := []int{}
+	for i := 1; i <= desired; i++ {
+		if !slices.Contains(existing, i) {
+			missingList = append(missingList, i)
+		}
+	}
+	return missingList
+}
+
+func ExtraReplicas(existing []int, desired int) []int {
+	extraList := []int{}
+	for _, extra := range existing {
+		if !(1 <= extra && extra <= desired) {
+			extraList = append(extraList, extra)
+		}
+	}
+	return extraList
 }

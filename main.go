@@ -88,9 +88,6 @@ func main() {
 				fmt.Println(err)
 				return
 			}
-		} else if replicas == currentApp.Replicas {
-			fmt.Println("Already at desired replica count")
-			return
 		} else {
 			if err = docker.ScaleUp(
 				currentApp.Image, currentApp.Name, currentApp.Network, currentApp.Replicas, replicas,

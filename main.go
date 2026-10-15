@@ -81,16 +81,9 @@ func main() {
 		if replicas < 1 {
 			fmt.Println("Replicas must be greater than zero")
 			return
-		} else if replicas < currentApp.Replicas {
-			if err = docker.ScaleDown(
-				currentApp.Name, currentApp.Replicas, replicas,
-			); err != nil {
-				fmt.Println(err)
-				return
-			}
 		} else {
-			if err = docker.ScaleUp(
-				currentApp.Image, currentApp.Name, currentApp.Network, currentApp.Replicas, replicas,
+			if err = docker.ReconcileReplicas(
+				currentApp.Image, currentApp.Name, currentApp.Network, replicas,
 			); err != nil {
 				fmt.Println(err)
 				return

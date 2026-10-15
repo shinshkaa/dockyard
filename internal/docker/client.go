@@ -457,15 +457,21 @@ func ScaleDown(
 	)
 	defer close()
 
-	for i := currentReplicas; i >= desiredReplicas+1; i-- {
-		containerName := fmt.Sprintf("%s-%d", appName, i)
+	replicasList, err := ListAppReplicas(appName)
+	if err != nil {
+		return err
+	}
+	extraReplicasList := ExtraReplicas(replicasList, desiredReplicas)
+
+	for _, replica := range extraReplicasList {
+		containerName := fmt.Sprintf("%s-%d", appName, replica)
 
 		if _, err = cli.ContainerStop(
 			ctx,
 			containerName,
 			client.ContainerStopOptions{},
 		); err != nil {
-			return fmt.Errorf("stop replica %d: %w", i, err)
+			return fmt.Errorf("stop replica %d: %w", replica, err)
 		}
 
 		if _, err = cli.ContainerRemove(
@@ -473,9 +479,68 @@ func ScaleDown(
 			containerName,
 			client.ContainerRemoveOptions{},
 		); err != nil {
-			return fmt.Errorf("delete replica %d: %w", i, err)
+			return fmt.Errorf("delete replica %d: %w", replica, err)
 		}
 	}
+
+	return nil
+}
+
+func ReconcileReplicas(
+	imageName, appName, networkName string,
+	desiredReplicas int,
+) error {
+	cli, err := client.New(client.FromEnv)
+	if err != nil {
+		return fmt.Errorf("create docker client: %w", err)
+	}
+	defer cli.Close()
+
+	ctx, close := context.WithTimeout(
+		context.Background(),
+		1*time.Minute,
+	)
+	defer close()
+
+	replicasList, err := ListAppReplicas(appName)
+	if err != nil {
+		return err
+	}
+	extraReplicasList := ExtraReplicas(replicasList, desiredReplicas)
+	missingReplicasList := MissingReplicas(replicasList, desiredReplicas)
+	for _, replica := range extraReplicasList {
+		containerName := fmt.Sprintf("%s-%d", appName, replica)
+
+		if _, err = cli.ContainerStop(
+			ctx,
+			containerName,
+			client.ContainerStopOptions{},
+		); err != nil {
+			return fmt.Errorf("stop replica %d: %w", replica, err)
+		}
+
+		if _, err = cli.ContainerRemove(
+			ctx,
+			containerName,
+			client.ContainerRemoveOptions{},
+		); err != nil {
+			return fmt.Errorf("delete replica %d: %w", replica, err)
+		}
+	}
+
+	if err := ensureImage(cli, ctx, imageName); err != nil {
+		return err
+	}
+	for _, missingReplicaID := range missingReplicasList {
+		containerName := fmt.Sprintf("%s-%d", appName, missingReplicaID)
+
+		if err := deploySingle(
+			cli, ctx, imageName, containerName, networkName, 0,
+		); err != nil {
+			return fmt.Errorf("create replica %d: %w", missingReplicaID, err)
+		}
+	}
+
 	return nil
 }
 

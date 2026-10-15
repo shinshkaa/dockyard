@@ -16,6 +16,11 @@ import (
 	"github.com/moby/moby/client"
 )
 
+type Replica struct {
+	Number int
+	State  string
+}
+
 func ListContainers() error {
 	cli, err := client.New(client.FromEnv)
 	if err != nil {
@@ -46,6 +51,66 @@ func ListContainers() error {
 		fmt.Println(c.ID[:12], c.State, c.Image)
 	}
 	return nil
+}
+
+func ListAppReplicasStates(appName string) ([]Replica, error) {
+	cli, err := client.New(client.FromEnv)
+	if err != nil {
+		return []Replica{}, fmt.Errorf("create docker client: %w", err)
+	}
+	defer cli.Close()
+
+	ctx, close := context.WithTimeout(
+		context.Background(),
+		5*time.Second,
+	)
+	defer close()
+
+	result, err := cli.ContainerList(
+		ctx,
+		client.ContainerListOptions{
+			All: true,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list containers: %w", err)
+	}
+	appReplicasList := []Replica{}
+	for _, c := range result.Items {
+		for _, name := range c.Names {
+			prefix := appName + "-"
+			name = strings.TrimPrefix(name, "/")
+			if !strings.HasPrefix(name, prefix) {
+				continue
+			}
+			replicaStr := strings.TrimPrefix(name, prefix)
+			replicaID, err := strconv.Atoi(replicaStr)
+			if err != nil || replicaID < 1 {
+				continue
+			}
+			appReplicasList = append(
+				appReplicasList,
+				Replica{
+					Number: replicaID,
+					State:  string(c.State),
+				})
+		}
+	}
+	slices.SortFunc(appReplicasList, func(a, b Replica) int {
+		return a.Number - b.Number
+	})
+	return appReplicasList, nil
+}
+
+func StoppedReplicas(replicas []Replica, desired int) []int {
+	stoppedReplicasList := []int{}
+	for _, replica := range replicas {
+		if replica.Number <= desired && replica.State != "running" {
+			stoppedReplicasList = append(stoppedReplicasList, replica.Number)
+		}
+	}
+	slices.Sort(stoppedReplicasList)
+	return stoppedReplicasList
 }
 
 func imagePull(cli *client.Client, ctx context.Context, imageName string) error {
@@ -528,9 +593,12 @@ func ReconcileReplicas(
 		}
 	}
 
-	if err := ensureImage(cli, ctx, imageName); err != nil {
-		return err
+	if len(missingReplicasList) > 0 {
+		if err := ensureImage(cli, ctx, imageName); err != nil {
+			return err
+		}
 	}
+
 	for _, missingReplicaID := range missingReplicasList {
 		containerName := fmt.Sprintf("%s-%d", appName, missingReplicaID)
 
@@ -538,6 +606,21 @@ func ReconcileReplicas(
 			cli, ctx, imageName, containerName, networkName, 0,
 		); err != nil {
 			return fmt.Errorf("create replica %d: %w", missingReplicaID, err)
+		}
+	}
+
+	replicasStates, err := ListAppReplicasStates(appName)
+	if err != nil {
+		return err
+	}
+	stopped := StoppedReplicas(replicasStates, desiredReplicas)
+	for _, replica := range stopped {
+		containerName := fmt.Sprintf("%s-%d", appName, replica)
+
+		if err := containerStart(
+			cli, ctx, containerName,
+		); err != nil {
+			return fmt.Errorf("start replica %d: %w", replica, err)
 		}
 	}
 

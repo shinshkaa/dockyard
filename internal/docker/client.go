@@ -9,50 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/pkg/stdcopy"
-	"github.com/moby/moby/api/types/container"
-	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 )
 
-type Replica struct {
-	Number int
-	State  string
-}
-
-func ListContainers() error {
-	cli, err := client.New(client.FromEnv)
-	if err != nil {
-		return fmt.Errorf("create docker client: %w", err)
-	}
-	defer cli.Close()
-
-	ctx, cancel := context.WithTimeout(
-		context.Background(),
-		5*time.Second,
-	)
-	defer cancel()
-
-	result, err := cli.ContainerList(
-		ctx,
-		client.ContainerListOptions{},
-	)
-	if err != nil {
-		return fmt.Errorf("list containers: %w", err)
-	}
-
-	if len(result.Items) == 0 {
-		fmt.Println("No running containers")
-		return nil
-	}
-
-	for _, c := range result.Items {
-		fmt.Println(c.ID[:12], c.State, c.Image)
-	}
-	return nil
-}
-
+// ListAppReplicasStates returns struct Replica
 func ListAppReplicasStates(appName string) ([]Replica, error) {
 	cli, err := client.New(client.FromEnv)
 	if err != nil {
@@ -102,48 +63,18 @@ func ListAppReplicasStates(appName string) ([]Replica, error) {
 	return appReplicasList, nil
 }
 
-func StoppedReplicas(replicas []Replica, desired int) []int {
-	stoppedReplicasList := []int{}
-	for _, replica := range replicas {
-		if replica.Number <= desired && replica.State != "running" {
-			stoppedReplicasList = append(stoppedReplicasList, replica.Number)
-		}
-	}
-	slices.Sort(stoppedReplicasList)
-	return stoppedReplicasList
-}
-
-func imagePull(cli *client.Client, ctx context.Context, imageName string) error {
-	response, err := cli.ImagePull(
-		ctx,
-		imageName,
-		client.ImagePullOptions{},
-	)
+// ListAppReplicas returns replica numbers
+func ListAppReplicas(appName string) ([]int, error) {
+	replicas, err := ListAppReplicasStates(appName)
 	if err != nil {
-		return fmt.Errorf("image pull: %w", err)
+		return nil, err
 	}
-	defer response.Close()
 
-	if err = response.Wait(ctx); err != nil {
-		return fmt.Errorf("pull image: %w", err)
+	numbers := make([]int, 0, len(replicas))
+	for _, replica := range replicas {
+		numbers = append(numbers, replica.Number)
 	}
-	return nil
-}
-
-func ensureImage(cli *client.Client, ctx context.Context, imageName string) error {
-	_, err := cli.ImageInspect(
-		ctx,
-		imageName,
-	)
-	if err == nil {
-		fmt.Println("Image already exists locally")
-		return nil
-	}
-	if !errdefs.IsNotFound(err) {
-		return fmt.Errorf("inspect image: %w", err)
-	}
-	fmt.Println("Image not found, pulling...")
-	return imagePull(cli, ctx, imageName)
+	return numbers, nil
 }
 
 func deploySingle(
@@ -162,136 +93,6 @@ func deploySingle(
 		return err
 	}
 
-	return nil
-}
-
-func containerCreate(
-	cli *client.Client,
-	ctx context.Context,
-	image, name, networkName string,
-	hostPort int,
-) (string, error) {
-	port, err := network.ParsePort("80/tcp")
-	if err != nil {
-		return "", fmt.Errorf("invalid container port: %w", err)
-	}
-
-	hostConfig := &container.HostConfig{}
-	if hostPort > 0 {
-		hostConfig.PortBindings = network.PortMap{
-			port: []network.PortBinding{
-				{
-					HostPort: strconv.Itoa(hostPort),
-				},
-			},
-		}
-	}
-
-	result, err := cli.ContainerCreate(
-		ctx,
-		client.ContainerCreateOptions{
-			Image: image,
-			Name:  name,
-			Config: &container.Config{
-				ExposedPorts: network.PortSet{
-					port: {},
-				},
-			},
-			HostConfig: hostConfig,
-			NetworkingConfig: &network.NetworkingConfig{
-				EndpointsConfig: map[string]*network.EndpointSettings{
-					networkName: {},
-				},
-			},
-		},
-	)
-	if err != nil {
-		return "", fmt.Errorf("container create: %w", err)
-	}
-	return result.ID, nil
-}
-
-func containerStart(cli *client.Client, ctx context.Context, ID string) error {
-	_, err := cli.ContainerStart(
-		ctx,
-		ID,
-		client.ContainerStartOptions{},
-	)
-	if err != nil {
-		return fmt.Errorf("container start: %w", err)
-	}
-	return nil
-
-}
-
-func DeployContainer(imageName, containerName, networkName string, hostPort int) error {
-	cli, err := client.New(client.FromEnv)
-	if err != nil {
-		return fmt.Errorf("create docker client: %w", err)
-	}
-	defer cli.Close()
-
-	ctx, cancel := context.WithTimeout(
-		context.Background(),
-		2*time.Minute,
-	)
-	defer cancel()
-
-	if err := ensureImage(cli, ctx, imageName); err != nil {
-		return err
-	}
-
-	if err := deploySingle(cli, ctx, imageName, containerName, networkName, hostPort); err != nil {
-		return err
-	}
-	return nil
-}
-
-func StopContainer(containerName string) error {
-	cli, err := client.New(client.FromEnv)
-	if err != nil {
-		return fmt.Errorf("create docker client: %w", err)
-	}
-	defer cli.Close()
-
-	ctx, cancel := context.WithTimeout(
-		context.Background(),
-		20*time.Second,
-	)
-	defer cancel()
-
-	_, err = cli.ContainerStop(
-		ctx,
-		containerName,
-		client.ContainerStopOptions{},
-	)
-	if err != nil {
-		return fmt.Errorf("container stop: %w", err)
-	}
-	return nil
-}
-
-func DeleteContainer(containerName string) error {
-	cli, err := client.New(client.FromEnv)
-	if err != nil {
-		return fmt.Errorf("create docker client: %w", err)
-	}
-	defer cli.Close()
-
-	ctx, close := context.WithTimeout(
-		context.Background(),
-		20*time.Second,
-	)
-	defer close()
-
-	_, err = cli.ContainerRemove(
-		ctx,
-		containerName,
-		client.ContainerRemoveOptions{},
-	)
-	if err != nil {
-		return fmt.Errorf("remove container: %w", err)
-	}
 	return nil
 }
 
@@ -335,100 +136,6 @@ func ShowLogs(containerName string) error {
 	)
 	if err != nil {
 		return fmt.Errorf("stdcopy: %w", err)
-	}
-	return nil
-}
-
-func ListAppReplicas(appName string) ([]int, error) {
-	cli, err := client.New(client.FromEnv)
-	if err != nil {
-		return []int{}, fmt.Errorf("create docker client: %w", err)
-	}
-	defer cli.Close()
-
-	ctx, close := context.WithTimeout(
-		context.Background(),
-		5*time.Second,
-	)
-	defer close()
-
-	result, err := cli.ContainerList(
-		ctx,
-		client.ContainerListOptions{
-			All: true,
-		},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("list containers: %w", err)
-	}
-
-	activeContainersList := []int{}
-	for _, c := range result.Items {
-		for _, name := range c.Names {
-			prefix := appName + "-"
-			name = strings.TrimPrefix(name, "/")
-			if !strings.HasPrefix(name, prefix) {
-				continue
-			}
-			replicaStr := strings.TrimPrefix(name, prefix)
-			replicaID, err := strconv.Atoi(replicaStr)
-			if err != nil || replicaID < 1 {
-				continue
-			}
-			activeContainersList = append(activeContainersList, replicaID)
-		}
-	}
-	slices.Sort(activeContainersList)
-	return activeContainersList, nil
-}
-
-func CreateNetwork(networkName string) error {
-	cli, err := client.New(client.FromEnv)
-	if err != nil {
-		return fmt.Errorf("create docker client: %w", err)
-	}
-	defer cli.Close()
-
-	ctx, close := context.WithTimeout(
-		context.Background(),
-		5*time.Second,
-	)
-	defer close()
-
-	_, err = cli.NetworkCreate(
-		ctx,
-		networkName,
-		client.NetworkCreateOptions{
-			Driver: "bridge",
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("network creation: %w", err)
-	}
-	return nil
-}
-
-func ConnectNetwork(networkName, containerName string) error {
-	cli, err := client.New(client.FromEnv)
-	if err != nil {
-		return fmt.Errorf("create docker client: %w", err)
-	}
-	defer cli.Close()
-
-	ctx, close := context.WithTimeout(
-		context.Background(),
-		5*time.Second,
-	)
-	defer close()
-
-	if _, err := cli.NetworkConnect(
-		ctx,
-		networkName,
-		client.NetworkConnectOptions{
-			Container: containerName,
-		},
-	); err != nil {
-		return fmt.Errorf("network connection: %w", err)
 	}
 	return nil
 }
@@ -549,100 +256,4 @@ func ScaleDown(
 	}
 
 	return nil
-}
-
-func ReconcileReplicas(
-	imageName, appName, networkName string,
-	desiredReplicas int,
-) error {
-	cli, err := client.New(client.FromEnv)
-	if err != nil {
-		return fmt.Errorf("create docker client: %w", err)
-	}
-	defer cli.Close()
-
-	ctx, close := context.WithTimeout(
-		context.Background(),
-		1*time.Minute,
-	)
-	defer close()
-
-	replicasList, err := ListAppReplicas(appName)
-	if err != nil {
-		return err
-	}
-	extraReplicasList := ExtraReplicas(replicasList, desiredReplicas)
-	missingReplicasList := MissingReplicas(replicasList, desiredReplicas)
-	for _, replica := range extraReplicasList {
-		containerName := fmt.Sprintf("%s-%d", appName, replica)
-
-		if _, err = cli.ContainerStop(
-			ctx,
-			containerName,
-			client.ContainerStopOptions{},
-		); err != nil {
-			return fmt.Errorf("stop replica %d: %w", replica, err)
-		}
-
-		if _, err = cli.ContainerRemove(
-			ctx,
-			containerName,
-			client.ContainerRemoveOptions{},
-		); err != nil {
-			return fmt.Errorf("delete replica %d: %w", replica, err)
-		}
-	}
-
-	if len(missingReplicasList) > 0 {
-		if err := ensureImage(cli, ctx, imageName); err != nil {
-			return err
-		}
-	}
-
-	for _, missingReplicaID := range missingReplicasList {
-		containerName := fmt.Sprintf("%s-%d", appName, missingReplicaID)
-
-		if err := deploySingle(
-			cli, ctx, imageName, containerName, networkName, 0,
-		); err != nil {
-			return fmt.Errorf("create replica %d: %w", missingReplicaID, err)
-		}
-	}
-
-	replicasStates, err := ListAppReplicasStates(appName)
-	if err != nil {
-		return err
-	}
-	stopped := StoppedReplicas(replicasStates, desiredReplicas)
-	for _, replica := range stopped {
-		containerName := fmt.Sprintf("%s-%d", appName, replica)
-
-		if err := containerStart(
-			cli, ctx, containerName,
-		); err != nil {
-			return fmt.Errorf("start replica %d: %w", replica, err)
-		}
-	}
-
-	return nil
-}
-
-func MissingReplicas(existing []int, desired int) []int {
-	missingList := []int{}
-	for i := 1; i <= desired; i++ {
-		if !slices.Contains(existing, i) {
-			missingList = append(missingList, i)
-		}
-	}
-	return missingList
-}
-
-func ExtraReplicas(existing []int, desired int) []int {
-	extraList := []int{}
-	for _, extra := range existing {
-		if !(1 <= extra && extra <= desired) {
-			extraList = append(extraList, extra)
-		}
-	}
-	return extraList
 }
